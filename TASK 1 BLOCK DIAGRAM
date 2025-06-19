@@ -17,3 +17,6 @@
 Arduino Pin 9 (PWM) ----[220Ω]----> Base of Transistor
 
 Arduino GND ----------------------- GND (shared with power source)
+
+Anode → Transistor side
+Cathode (band) → Motor +ve
