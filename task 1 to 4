@@ -1,0 +1,131 @@
+#include <Wire.h>
+#include <Servo.h>
+
+// Pin Definitions
+#define motorPin 9           // Motor (via transistor or motor driver)
+#define latchPin 10          // STCP of 74HC595
+#define clockPin 11          // SHCP of 74HC595
+#define dataPin 12           // DS of 74HC595
+#define servoPin 6           // Servo Motor
+#define trigPin 7            // Ultrasonic sensor TRIG
+#define echoPin 8            // Ultrasonic sensor ECHO
+
+// Accelerometer
+#define ADXL345 0x53
+int x = 0, y = 0, z = 0;
+const int fallThreshold = 250; 
+
+// Distance thresholds
+const int minDistance = 10;    // Min distance in cm
+const int maxDistance = 100;   // Max distance in cm
+const int maxSpeed = 255;
+
+Servo speedServo;
+
+int digit[10][8] = {
+  {1,1,1,1,1,1,0,0}, // 0
+  {0,1,1,0,0,0,0,0}, // 1
+  {1,1,0,1,1,0,1,0}, // 2
+  {1,1,1,1,0,0,1,0}, // 3
+  {0,1,1,0,0,1,1,0}, // 4
+  {1,0,1,1,0,1,1,0}, // 5
+  {1,0,1,1,1,1,1,0}, // 6
+  {1,1,1,0,0,0,0,0}, // 7
+  {1,1,1,1,1,1,1,0}, // 8
+  {1,1,1,0,0,1,1,0}  // 9
+};
+
+void readAxis() {
+  Wire.beginTransmission(ADXL345);
+  Wire.write(0x32);
+  Wire.endTransmission(false);
+  Wire.requestFrom(ADXL345, 6, true);
+
+  x = (int16_t)(Wire.read() | (Wire.read() << 8));
+  y = (int16_t)(Wire.read() | (Wire.read() << 8));
+  z = (int16_t)(Wire.read() | (Wire.read() << 8));
+}
+
+void displayDigit(int num) {
+  digitalWrite(latchPin, LOW);
+  for (int i = 7; i >= 0; i--) {
+    digitalWrite(clockPin, LOW);
+    digitalWrite(dataPin, digit[num][i]);
+    digitalWrite(clockPin, HIGH);
+  }
+  digitalWrite(latchPin, HIGH);
+}
+
+long measureDistance() {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(5);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+  long duration = pulseIn(echoPin, HIGH);
+  long distance = duration * 0.034 / 2;
+  return distance;
+}
+
+void setup() {
+  Serial.begin(9600);
+  Wire.begin();
+
+  // ADXL345 init
+  Wire.beginTransmission(ADXL345);
+  Wire.write(0x2D);
+  Wire.write(8);
+  Wire.endTransmission();
+
+  pinMode(motorPin, OUTPUT);
+  pinMode(latchPin, OUTPUT);
+  pinMode(clockPin, OUTPUT);
+  pinMode(dataPin, OUTPUT);
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+
+  speedServo.attach(servoPin);
+}
+
+void loop() {
+  readAxis();
+  Serial.print("X: "); Serial.print(x);
+  Serial.print(" | Y: "); Serial.print(y);
+  Serial.print(" | Z: "); Serial.println(z);
+
+  // Fall detection
+  if (abs(x) > fallThreshold || abs(y) > fallThreshold) {
+    analogWrite(motorPin, 0);
+    displayDigit(0);
+    speedServo.write(0);
+    return;
+  }
+
+  // Speed control (X-axis tilt)
+  int speedPWM = map(x, -200, 200, 0, 255);
+  speedPWM = constrain(speedPWM, 0, 255);
+
+  // Obstacle detection
+  long distance = measureDistance();
+  Serial.print("Distance: ");
+  Serial.println(distance);
+
+  if (distance <= minDistance) {
+    speedPWM = 0;
+  } else if (distance < maxDistance) {
+    speedPWM = map(distance, minDistance, maxDistance, 0, speedPWM);
+  }
+
+  // Apply results
+  analogWrite(motorPin, speedPWM);
+
+  // Update 7-segment display
+  int speedVal = map(speedPWM, 0, 255, 0, 9);
+  displayDigit(speedVal);
+
+  // Update servo
+  int servoAngle = map(speedPWM, 0, 255, 0, 180);
+  speedServo.write(servoAngle);
+
+  delay(100);
+}
