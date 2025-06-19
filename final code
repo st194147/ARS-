@@ -1,0 +1,210 @@
+#include <Wire.h>
+#include <Servo.h>
+
+// ========================= Pin Definitions =========================
+#define motorPin 9
+#define latchPin 10
+#define clockPin 11
+#define dataPin 12
+#define servoPin 6
+#define trigPin 7
+#define echoPin 8
+#define photoPin A0
+#define potPin A1
+#define joystickX A2     // Joystick Speed
+#define joystickY A3     // Joystick Steering
+#define joystickButton 2
+#define in1 3            // H-Bridge Inputs
+#define in2 4
+#define in3 5
+#define in4 13
+
+// ========================= Accelerometer =========================
+#define ADXL345 0x53
+int x = 0, y = 0, z = 0;
+const int fallThreshold = 250;
+
+// ========================= Speed/Distance =========================
+const int minDistance = 10;
+const int maxDistance = 100;
+
+// ========================= Globals =========================
+Servo speedServo;
+
+int digit[10][8] = {
+  {1,1,1,1,1,1,0,0},
+  {0,1,1,0,0,0,0,0},
+  {1,1,0,1,1,0,1,0},
+  {1,1,1,1,0,0,1,0},
+  {0,1,1,0,0,1,1,0},
+  {1,0,1,1,0,1,1,0},
+  {1,0,1,1,1,1,1,0},
+  {1,1,1,0,0,0,0,0},
+  {1,1,1,1,1,1,1,0},
+  {1,1,1,0,0,1,1,0}
+};
+
+byte shiftData = 0;
+bool droneMode = false;
+
+void readAxis() {
+  Wire.beginTransmission(ADXL345);
+  Wire.write(0x32);
+  Wire.endTransmission(false);
+  Wire.requestFrom(ADXL345, 6, true);
+
+  x = (int16_t)(Wire.read() | (Wire.read() << 8));
+  y = (int16_t)(Wire.read() | (Wire.read() << 8));
+  z = (int16_t)(Wire.read() | (Wire.read() << 8));
+}
+
+long measureDistance() {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(5);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+  long duration = pulseIn(echoPin, HIGH);
+  return duration * 0.034 / 2;
+}
+
+void displayDigit(int num) {
+  for (int i = 0; i < 7; i++) {
+    if (digit[num][i] == 1) {
+      shiftData |= (1 << i);
+    } else {
+      shiftData &= ~(1 << i);
+    }
+  }
+}
+
+void sendShiftData() {
+  digitalWrite(latchPin, LOW);
+  shiftOut(dataPin, clockPin, MSBFIRST, shiftData);
+  digitalWrite(latchPin, HIGH);
+}
+
+void setup() {
+  Serial.begin(9600);
+  Wire.begin();
+
+  // ADXL345 init
+  Wire.beginTransmission(ADXL345);
+  Wire.write(0x2D);
+  Wire.write(8);
+  Wire.endTransmission();
+
+  // Pin setups
+  pinMode(motorPin, OUTPUT);
+  pinMode(latchPin, OUTPUT);
+  pinMode(clockPin, OUTPUT);
+  pinMode(dataPin, OUTPUT);
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+  pinMode(photoPin, INPUT);
+  pinMode(potPin, INPUT);
+  pinMode(joystickButton, INPUT_PULLUP);
+  pinMode(in1, OUTPUT);
+  pinMode(in2, OUTPUT);
+  pinMode(in3, OUTPUT);
+  pinMode(in4, OUTPUT);
+
+  speedServo.attach(servoPin);
+}
+
+void loop() {
+  // ======================= Mode Toggle =======================
+  if (digitalRead(joystickButton) == LOW) {
+    droneMode = !droneMode;
+    delay(300); // Debounce
+  }
+
+  // ======================= Sensor Inputs =======================
+  if (!droneMode) {
+    readAxis();
+    Serial.print("X: "); Serial.print(x);
+    Serial.print(" | Y: "); Serial.print(y);
+    Serial.print(" | Z: "); Serial.println(z);
+  }
+
+  // ======================= FALL DETECTION =======================
+  if (!droneMode && (abs(x) > fallThreshold || abs(y) > fallThreshold)) {
+    analogWrite(motorPin, 0);
+    shiftData = 0x00;
+    sendShiftData();
+    speedServo.write(0);
+    return;
+  }
+
+  // ======================= SPEED CONTROL =======================
+  int speedPWM;
+  if (droneMode) {
+    int joystickSpeed = analogRead(joystickX);
+    speedPWM = map(joystickSpeed, 0, 1023, 0, 255);
+  } else {
+    speedPWM = map(x, -200, 200, 0, 255);
+  }
+  speedPWM = constrain(speedPWM, 0, 255);
+
+  // ======================= OBSTACLE DETECTION =======================
+  long distance = measureDistance();
+  Serial.print("Distance: ");
+  Serial.println(distance);
+  if (distance <= minDistance) {
+    speedPWM = 0;
+  } else if (distance < maxDistance) {
+    speedPWM = map(distance, minDistance, maxDistance, 0, speedPWM);
+  }
+
+  analogWrite(motorPin, speedPWM);
+
+  // ======================= SPEED DISPLAY =======================
+  int speedVal = map(speedPWM, 0, 255, 0, 9);
+  displayDigit(speedVal);
+
+  // ======================= SERVO ANGLE =======================
+  int servoAngle = map(speedPWM, 0, 255, 0, 180);
+  speedServo.write(servoAngle);
+
+  // ======================= LIGHTING CONTROL =======================
+  int potValue = analogRead(potPin);
+  int lightValue;
+
+  if (potValue < 10) {
+    int photoValue = analogRead(photoPin);
+    lightValue = map(photoValue, 0, 1023, 255, 0);
+  } else {
+    lightValue = map(potValue, 0, 1023, 0, 255);
+  }
+
+  shiftData &= ~0x80;
+  unsigned long now = millis();
+  if ((now % 255) < lightValue) {
+    shiftData |= 0x80;
+  }
+
+  sendShiftData();
+
+  // ======================= DRONE MODE STEERING =======================
+  if (droneMode) {
+    int joystickSteer = analogRead(joystickY);
+    if (joystickSteer < 400) {
+      digitalWrite(in1, HIGH);
+      digitalWrite(in2, LOW);
+      digitalWrite(in3, LOW);
+      digitalWrite(in4, LOW);
+    } else if (joystickSteer > 600) {
+      digitalWrite(in1, LOW);
+      digitalWrite(in2, HIGH);
+      digitalWrite(in3, LOW);
+      digitalWrite(in4, LOW);
+    } else {
+      digitalWrite(in1, LOW);
+      digitalWrite(in2, LOW);
+      digitalWrite(in3, LOW);
+      digitalWrite(in4, LOW);
+    }
+  }
+
+  delay(10);
+}
