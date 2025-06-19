@@ -1,0 +1,106 @@
+#include <Wire.h>
+#include <Servo.h>
+
+#define ADXL345 0x53
+#define DCmotor 11
+#define SERVO_PIN 10
+
+// Shift Register Pins
+#define DATA_PIN 8
+#define CLOCK_PIN 13
+#define LATCH_PIN 12
+
+Servo speedo;
+
+int digit0[] = {1,1,1,1,1,1,0,0};
+int digit1[] = {0,1,1,0,0,0,0,0};
+int digit2[] = {1,1,0,1,1,0,1,0};
+int digit3[] = {1,1,1,1,0,0,1,0};
+int digit4[] = {0,1,1,0,0,1,1,0};
+int digit5[] = {1,0,1,1,0,1,1,0};
+int digit6[] = {1,0,1,1,1,1,1,0};
+int digit7[] = {1,1,1,0,0,0,0,0};
+int digit8[] = {1,1,1,1,1,1,1,0};
+int digit9[] = {1,1,1,0,0,1,1,0};
+
+int* digits[] = {
+  digit0, digit1, digit2, digit3, digit4,
+  digit5, digit6, digit7, digit8, digit9
+};
+
+void setup() {
+  Serial.begin(9600);
+  Wire.begin();
+
+  pinMode(DCmotor, OUTPUT);
+  pinMode(DATA_PIN, OUTPUT);
+  pinMode(CLOCK_PIN, OUTPUT);
+  pinMode(LATCH_PIN, OUTPUT);
+
+  speedo.attach(SERVO_PIN);
+
+  // Initialize ADXL345
+  Wire.beginTransmission(ADXL345);
+  Wire.write(0x2D);  // Power control register
+  Wire.write(0x08);  // Measurement mode
+  Wire.endTransmission();
+}
+
+void readAxis(int16_t &x, int16_t &y, int16_t &z) {
+  Wire.beginTransmission(ADXL345);
+  Wire.write(0x32); // Start at DATAX0
+  Wire.endTransmission(false);
+  Wire.requestFrom(ADXL345, 6, true);
+
+  x = (int16_t)(Wire.read() | Wire.read() << 8);
+  y = (int16_t)(Wire.read() | Wire.read() << 8);
+  z = (int16_t)(Wire.read() | Wire.read() << 8);
+}
+
+void displayDigit(int val) {
+  digitalWrite(LATCH_PIN, LOW);
+  for (int i = 7; i >= 0; i--) {
+    digitalWrite(CLOCK_PIN, LOW);
+    digitalWrite(DATA_PIN, digits[val][i]);
+    digitalWrite(CLOCK_PIN, HIGH);
+  }
+  digitalWrite(LATCH_PIN, HIGH);
+}
+
+void loop() {
+  int16_t x, y, z;
+  readAxis(x, y, z);
+
+  // Tilt logic
+  int xTilt = x / 2 + 127; // map raw tilt to range 0–255
+  int yTilt = y / 2 + 127;
+
+  // Fall detection: if tilt is extreme (free fall or crash)
+  if (abs(x) > 250 || abs(y) > 250) {
+    analogWrite(DCmotor, 0);
+    displayDigit(0);
+    speedo.write(0);
+    Serial.println("FALL DETECTED!");
+    delay(500);  // Prevent flicker
+    return;
+  }
+
+  // Speed control
+  int speedPWM = constrain(yTilt, 0, 255);
+  analogWrite(DCmotor, speedPWM);
+
+  // Display speed (arbitrary 0–9)
+  int speedLevel = map(speedPWM, 0, 255, 0, 9);
+  displayDigit(speedLevel);
+
+  // Servo motor as analog speedometer
+  int servoPos = map(speedPWM, 0, 255, 0, 180);
+  speedo.write(servoPos);
+
+  // Debug info
+  Serial.print("X: "); Serial.print(x);
+  Serial.print(" | Y: "); Serial.print(y);
+  Serial.print(" | Speed PWM: "); Serial.println(speedPWM);
+
+  delay(100);
+}
