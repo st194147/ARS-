@@ -1,0 +1,90 @@
+#include <Wire.h>
+#include <Servo.h>
+
+#define ADXL345 0x53
+#define motorPin 9
+#define servoPin 10
+
+// Shift register pins
+#define dataPin 8
+#define latchPin 12
+#define clockPin 13
+
+Servo speedServo;
+
+// Digit definitions for common cathode 7-segment
+int digits[10][8] = {
+  {1,1,1,1,1,1,0,0}, // 0
+  {0,1,1,0,0,0,0,0}, // 1
+  {1,1,0,1,1,0,1,0}, // 2
+  {1,1,1,1,0,0,1,0}, // 3
+  {0,1,1,0,0,1,1,0}, // 4
+  {1,0,1,1,0,1,1,0}, // 5
+  {1,0,1,1,1,1,1,0}, // 6
+  {1,1,1,0,0,0,0,0}, // 7
+  {1,1,1,1,1,1,1,0}, // 8
+  {1,1,1,0,0,1,1,0}  // 9
+};
+
+void setup() {
+  Serial.begin(9600);
+  Wire.begin();
+  
+  // Initialize ADXL345
+  Wire.beginTransmission(ADXL345);
+  Wire.write(0x2D);  // Power control register
+  Wire.write(8);     // Set measure bit
+  Wire.endTransmission();
+
+  // Set motor and shift register pins
+  pinMode(motorPin, OUTPUT);
+  pinMode(dataPin, OUTPUT);
+  pinMode(clockPin, OUTPUT);
+  pinMode(latchPin, OUTPUT);
+
+  // Servo init
+  speedServo.attach(servoPin);
+}
+
+void loop() {
+  int xRaw = readAxis(0x32); // X-axis
+
+  // Map X tilt to speed: from -200 to +200 → 0 to 255
+  int pwm = map(xRaw, -200, 200, 0, 255);
+  pwm = constrain(pwm, 0, 255);
+
+  // Send PWM to motor
+  analogWrite(motorPin, pwm);
+
+  // Convert to speed 0–9 for display
+  int speedDigit = map(pwm, 0, 255, 0, 9);
+  speedDigit = constrain(speedDigit, 0, 9);
+
+  // Display on 7-segment
+  displayDigit(speedDigit);
+
+  // Move servo to indicate speed
+  int servoAngle = map(speedDigit, 0, 9, 0, 180);
+  speedServo.write(servoAngle);
+
+  delay(100);
+}
+
+int readAxis(byte regAddress) {
+  Wire.beginTransmission(ADXL345);
+  Wire.write(regAddress);
+  Wire.endTransmission(false);
+  Wire.requestFrom(ADXL345, 2, true);
+  int16_t raw = Wire.read() | (Wire.read() << 8);
+  return raw;
+}
+
+void displayDigit(int digit) {
+  digitalWrite(latchPin, LOW);
+  for (int i = 7; i >= 0; i--) {
+    digitalWrite(clockPin, LOW);
+    digitalWrite(dataPin, digits[digit][i]);
+    digitalWrite(clockPin, HIGH);
+  }
+  digitalWrite(latchPin, HIGH);
+}
