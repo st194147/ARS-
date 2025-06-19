@@ -1,0 +1,98 @@
+#include <Wire.h>
+#include <Servo.h>
+
+// Define pin connections
+#define ADXL345 0x53
+#define motorPin 9
+#define servoPin 10
+#define dataPin 8     // DS
+#define latchPin 12   // STCP / RCLK
+#define clockPin 13   // SHCP / SRCLK
+
+Servo speedServo;
+
+// 7-segment digits (common cathode)
+int digits[10][8] = {
+  {1,1,1,1,1,1,0,0}, // 0
+  {0,1,1,0,0,0,0,0}, // 1
+  {1,1,0,1,1,0,1,0}, // 2
+  {1,1,1,1,0,0,1,0}, // 3
+  {0,1,1,0,0,1,1,0}, // 4
+  {1,0,1,1,0,1,1,0}, // 5
+  {1,0,1,1,1,1,1,0}, // 6
+  {1,1,1,0,0,0,0,0}, // 7
+  {1,1,1,1,1,1,1,0}, // 8
+  {1,1,1,0,0,1,1,0}  // 9
+};
+
+// Fall detection threshold
+const int fallThreshold = 300; // Adjust this based on real test values
+
+void setup() {
+  Serial.begin(9600);
+  Wire.begin();
+
+  // Init ADXL345
+  Wire.beginTransmission(ADXL345);
+  Wire.write(0x2D);  // Power control register
+  Wire.write(8);     // Measurement mode
+  Wire.endTransmission();
+
+  pinMode(motorPin, OUTPUT);
+  pinMode(dataPin, OUTPUT);
+  pinMode(clockPin, OUTPUT);
+  pinMode(latchPin, OUTPUT);
+
+  speedServo.attach(servoPin);
+}
+
+void loop() {
+  int xRaw = readAxis(0x32); // X-axis
+  int yRaw = readAxis(0x34); // Y-axis
+
+  // --- Fall Detection ---
+  if (abs(xRaw) > fallThreshold || abs(yRaw) > fallThreshold) {
+    analogWrite(motorPin, 0);          // stop motor
+    displayDigit(0);                   // show 0 speed
+    speedServo.write(0);               // reset servo
+    Serial.println("Fall detected!");
+    delay(500);
+    return; // Skip rest of loop
+  }
+
+  // --- Speed Control ---
+  int pwm = map(xRaw, -200, 200, 0, 255);   // X tilt to PWM
+  pwm = constrain(pwm, 0, 255);
+  analogWrite(motorPin, pwm);
+
+  // --- Display Speed (0-9) ---
+  int speedDigit = map(pwm, 0, 255, 0, 9);
+  speedDigit = constrain(speedDigit, 0, 9);
+  displayDigit(speedDigit);
+
+  // --- Servo Motor Movement ---
+  int servoAngle = map(speedDigit, 0, 9, 0, 180);
+  speedServo.write(servoAngle);
+
+  delay(100);
+}
+
+// Read 2-byte axis data
+int readAxis(byte reg) {
+  Wire.beginTransmission(ADXL345);
+  Wire.write(reg);
+  Wire.endTransmission(false);
+  Wire.requestFrom(ADXL345, 2, true);
+  return (int16_t)(Wire.read() | (Wire.read() << 8));
+}
+
+// Display digit on 7-segment via shift register
+void displayDigit(int digit) {
+  digitalWrite(latchPin, LOW);
+  for (int i = 7; i >= 0; i--) {
+    digitalWrite(clockPin, LOW);
+    digitalWrite(dataPin, digits[digit][i]);
+    digitalWrite(clockPin, HIGH);
+  }
+  digitalWrite(latchPin, HIGH);
+}
