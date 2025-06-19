@@ -45,9 +45,9 @@ void loop() {
 
 int readAxis(byte regAddress) {
   Wire.beginTransmission(ADXL345);
-  Wire.write(regAddress);
+  Wire.write();
   Wire.endTransmission(false);
-  Wire.requestFrom(ADXL345, 2, true);
+  Wire.requestFrom(ADXL345, 6, true);
   int16_t raw = Wire.read() | (Wire.read() << 8);
   return raw;
 }
