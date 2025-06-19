@@ -105,8 +105,10 @@ void loop() {
   if (abs(x) > fallThreshold || abs(y) > fallThreshold) {
     analogWrite(motorPin, 0);
     displayDigit(0);
-    speedServo.write(0);
+    shiftData = 0x00;
     sendShiftData();
+    speedServo.write(0);
+  
     return;
   }
 
@@ -151,11 +153,11 @@ void loop() {
   shiftData = shiftData & 0xFE; // Clear the first bit (LED position)
 
   // The higher the lightValue, the longer the LED will be ON
+  // Software PWM for Q7 (shift register MSB)
+  shiftData &= ~0x80; // Clear Q7
   unsigned long now = millis();
   if ((now % 255) < lightValue) {
-    shiftData |= 0x80; // Turn ON LED
-  } else {
-    shiftData &= ~0x80; // Turn OFF LED
+    shiftData |= 0x80; // Set Q7
   }
 
   sendShiftData();
