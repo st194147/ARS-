@@ -1,0 +1,53 @@
+#include <Wire.h>
+
+#define ADXL345 0x53
+const int motorPin = 9; // PWM output to transistor base
+
+const int fallThreshold = 300; // Threshold for detecting fall
+
+void setup() {
+  Serial.begin(9600);
+  Wire.begin();
+
+  // Enable ADXL345 measurement mode
+  Wire.beginTransmission(ADXL345);
+  Wire.write(0x2D);
+  Wire.write(8);
+  Wire.endTransmission();
+
+  pinMode(motorPin, OUTPUT);
+}
+
+void loop() {
+  int xRaw = readAxis(0x32); // X-axis register
+  int yRaw = readAxis(0x34); // Y-axis register
+
+  Serial.print("X: ");
+  Serial.print(xRaw);
+  Serial.print(" | Y: ");
+  Serial.println(yRaw);
+
+  // 🚨 FALL DETECTION (X or Y beyond safe range)
+  if (abs(xRaw) > fallThreshold || abs(yRaw) > fallThreshold) {
+    Serial.println("FALL DETECTED! Stopping motor.");
+    analogWrite(motorPin, 0);
+    delay(1000);  // pause to prevent re-triggering
+    return;
+  }
+
+  // 🏁 Normal speed control (based on X only for now)
+  int speed = map(xRaw, -200, 200, 0, 255);
+  speed = constrain(speed, 0, 255);
+  analogWrite(motorPin, speed);
+
+  delay(100);
+}
+
+int readAxis(byte regAddress) {
+  Wire.beginTransmission(ADXL345);
+  Wire.write(regAddress);
+  Wire.endTransmission(false);
+  Wire.requestFrom(ADXL345, 2, true);
+  int16_t raw = Wire.read() | (Wire.read() << 8);
+  return raw;
+}
