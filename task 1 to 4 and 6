@@ -1,0 +1,163 @@
+#include <Wire.h>
+#include <Servo.h>
+
+// Pin Definitions
+#define motorPin 9           // Motor (via transistor or motor driver)
+#define latchPin 10          // STCP of 74HC595
+#define clockPin 11          // SHCP of 74HC595
+#define dataPin 12           // DS of 74HC595
+#define servoPin 6           // Servo Motor
+#define trigPin 7            // Ultrasonic sensor TRIG
+#define echoPin 8            // Ultrasonic sensor ECHO
+#define photoPin A0          // Photoresistor
+#define potPin A1            // Potentiometer
+
+// Accelerometer
+#define ADXL345 0x53
+int x = 0, y = 0, z = 0;
+const int fallThreshold = 250;
+
+const int minDistance = 10;
+const int maxDistance = 100;
+
+Servo speedServo;
+
+int digit[10][8] = {
+  {1,1,1,1,1,1,0,0},
+  {0,1,1,0,0,0,0,0},
+  {1,1,0,1,1,0,1,0},
+  {1,1,1,1,0,0,1,0},
+  {0,1,1,0,0,1,1,0},
+  {1,0,1,1,0,1,1,0},
+  {1,0,1,1,1,1,1,0},
+  {1,1,1,0,0,0,0,0},
+  {1,1,1,1,1,1,1,0},
+  {1,1,1,0,0,1,1,0}
+};
+
+byte shiftData = 0;
+
+void readAxis() {
+  Wire.beginTransmission(ADXL345);
+  Wire.write(0x32);
+  Wire.endTransmission(false);
+  Wire.requestFrom(ADXL345, 6, true);
+
+  x = (int16_t)(Wire.read() | (Wire.read() << 8));
+  y = (int16_t)(Wire.read() | (Wire.read() << 8));
+  z = (int16_t)(Wire.read() | (Wire.read() << 8));
+}
+
+long measureDistance() {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(5);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+  long duration = pulseIn(echoPin, HIGH);
+  long distance = duration * 0.034 / 2;
+  return distance;
+}
+
+void displayDigit(int num) {
+  for (int i = 0; i < 8; i++) {
+    if (digit[num][i] == 1) {
+      shiftData |= (1 << i);
+    } else {
+      shiftData &= ~(1 << i);
+    }
+  }
+}
+
+void sendShiftData() {
+  digitalWrite(latchPin, LOW);
+  shiftOut(dataPin, clockPin, MSBFIRST, shiftData);
+  digitalWrite(latchPin, HIGH);
+}
+
+void setup() {
+  Serial.begin(9600);
+  Wire.begin();
+
+  // ADXL345 init
+  Wire.beginTransmission(ADXL345);
+  Wire.write(0x2D);
+  Wire.write(8);
+  Wire.endTransmission();
+
+  pinMode(motorPin, OUTPUT);
+  pinMode(latchPin, OUTPUT);
+  pinMode(clockPin, OUTPUT);
+  pinMode(dataPin, OUTPUT);
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+
+  speedServo.attach(servoPin);
+}
+
+void loop() {
+  readAxis();
+  Serial.print("X: "); Serial.print(x);
+  Serial.print(" | Y: "); Serial.print(y);
+  Serial.print(" | Z: "); Serial.println(z);
+
+  // FALL DETECTION
+  if (abs(x) > fallThreshold || abs(y) > fallThreshold) {
+    analogWrite(motorPin, 0);
+    displayDigit(0);
+    speedServo.write(0);
+    sendShiftData();
+    return;
+  }
+
+  // SPEED CONTROL
+  int speedPWM = map(x, -200, 200, 0, 255);
+  speedPWM = constrain(speedPWM, 0, 255);
+
+  // OBSTACLE DETECTION
+  long distance = measureDistance();
+  Serial.print("Distance: ");
+  Serial.println(distance);
+  if (distance <= minDistance) {
+    speedPWM = 0;
+  } else if (distance < maxDistance) {
+    speedPWM = map(distance, minDistance, maxDistance, 0, speedPWM);
+  }
+
+  analogWrite(motorPin, speedPWM);
+
+  // DISPLAY DIGIT
+  int speedVal = map(speedPWM, 0, 255, 0, 9);
+  displayDigit(speedVal);
+
+  // SERVO ANGLE
+  int servoAngle = map(speedPWM, 0, 255, 0, 180);
+  speedServo.write(servoAngle);
+
+  // LIGHTING CONTROL
+  int potValue = analogRead(potPin);
+  int lightValue;
+
+  if (potValue < 10) {
+    // Min position -> use photoresistor
+    int photoValue = analogRead(photoPin);
+    lightValue = map(photoValue, 0, 1023, 255, 0);
+  } else {
+    // Use potentiometer
+    lightValue = map(potValue, 0, 1023, 0, 255);
+  }
+
+  // Software PWM for the LED (shift register output) using shiftData
+  shiftData = shiftData & 0xFE; // Clear the first bit (LED position)
+
+  // The higher the lightValue, the longer the LED will be ON
+  unsigned long now = millis();
+  if ((now % 255) < lightValue) {
+    shiftData |= 0x80; // Turn ON LED
+  } else {
+    shiftData &= ~0x80; // Turn OFF LED
+  }
+
+  sendShiftData();
+  delay(10);
+}
