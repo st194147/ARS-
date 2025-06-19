@@ -1,0 +1,19 @@
+         +12V (or 9V battery)
+            |
+           (+)
+            |
+         DC Motor
+            |
+           (–)
+            |
+         Collector
+           |
+         NPN Transistor (e.g., 2N2222)
+           |
+         Emitter
+           |
+          GND
+          
+Arduino Pin 9 (PWM) ----[220Ω]----> Base of Transistor
+
+Arduino GND ----------------------- GND (shared with power source)
