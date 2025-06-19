@@ -1,0 +1,43 @@
+#include <Wire.h>
+
+#define ADXL345 0x53
+
+const int motorPin = 9; // PWM pin connected to transistor base via resistor
+
+void setup() {
+  Serial.begin(9600);
+  Wire.begin();
+
+  // Initialize ADXL345
+  Wire.beginTransmission(ADXL345);
+  Wire.write(0x2D);    
+  Wire.write(8);       
+  Wire.endTransmission();
+
+  pinMode(motorPin, OUTPUT);
+}
+
+void loop() {
+  int xRaw = readAxis(0x32); // X-axis
+
+  Serial.print("X-axis: ");
+  Serial.println(xRaw);
+
+  // Map X-tilt to motor speed
+  int speed = map(xRaw, -200, 200, 0, 255);
+  speed = constrain(speed, 0, 255);
+
+  analogWrite(motorPin, speed);  // Transistor amplifies this to motor
+
+  delay(100);
+}
+
+int readAxis(byte regAddress) {
+  Wire.beginTransmission(ADXL345);
+  Wire.write(regAddress);
+  Wire.endTransmission(false);
+  Wire.requestFrom(ADXL345, 2, true);
+  int16_t raw = Wire.read() | (Wire.read() << 8);
+  return raw;
+}
+
