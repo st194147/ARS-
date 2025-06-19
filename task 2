@@ -7,8 +7,16 @@
 
 // Shift register pins
 #define dataPin 8
-#define latchPin 12
-#define clockPin 13
+#define latchPin 12  // STCP RCLK
+#define clockPin 13  // SHCP SRCLK
+/* 
+Arduino Code Name | 74HC595 Pin Name          | Full Meaning                            |
+| ----------------- | ------------------------- | --------------------------------------- |
+| `dataPin`         | **DS** (pin 14)           | Data Serial input                       |
+| `clockPin`        | **SHCP / SRCLK** (pin 11) | Shift Clock (moves data into register)  |
+| `latchPin`        | **STCP / RCLK** (pin 12)  | Latch Clock (moves data to output pins) |
+*/
+
 
 Servo speedServo;
 
@@ -50,7 +58,7 @@ void loop() {
   int xRaw = readAxis(0x32); // X-axis
 
   // Map X tilt to speed: from -200 to +200 → 0 to 255
-  int pwm = map(xRaw, -200, 200, 0, 255);
+  int pwm = map(xRaw, -255, 255, 0, 255);
   pwm = constrain(pwm, 0, 255);
 
   // Send PWM to motor
